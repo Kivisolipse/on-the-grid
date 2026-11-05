@@ -1,0 +1,11 @@
+period,site_id,departures,departures_below_required_soc,public_arrivals,public_abandoned,public_abandon_pct,energy_mwh,energy_cost_eur,peak_kw,charger_availability_pct
+all_14_days,S1,392,12,0,0,,118.72,6298.0,1080.0,99.27
+all_14_days,S2,142,4,0,0,,61.93,3965.0,800.0,98.63
+all_14_days,S3,0,0,2465,354,14.4,201.18,14747.0,1500.0,96.5
+all_14_days,S4,0,0,1474,44,3.0,56.38,3590.0,600.0,97.62
+all_14_days,S5,72,8,0,0,,27.44,1378.0,600.0,86.25
+scenario_day,S1,32,4,0,0,,9.23,668.0,1080.0,94.1
+scenario_day,S2,18,4,0,0,,5.96,689.0,800.0,100.0
+scenario_day,S3,0,0,256,76,29.7,17.03,2300.0,1500.0,90.0
+scenario_day,S4,0,0,101,1,1.0,3.9,401.0,526.0,98.7
+scenario_day,S5,12,5,0,0,,4.19,299.0,600.0,87.5

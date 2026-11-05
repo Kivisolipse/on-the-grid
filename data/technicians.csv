@@ -1,0 +1,4 @@
+technician_id,base_location,skills,shift,hourly_cost_eur
+TE1,Local service base,electrical;dc_charging;cabinet,Mon-Fri 08-16,78
+TE2,Local service base,electrical;dc_charging,"Mon-Fri 08-16, on-call week 46",78
+TE3,Regional office,electrical;dc_charging;cabinet;commissioning,Mon-Fri 08-16,85

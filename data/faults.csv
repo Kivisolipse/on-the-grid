@@ -1,0 +1,20 @@
+fault_id,site_id,cabinet_id,charger_id,start_ts,fault_category,severity,symptom,cleared_ts,cleared_by
+F001,S4,C4-1,D4-4,2026-11-02T10:55:00+02:00,connector,critical,Connector lock / cable error,2026-11-02T15:30:00+02:00,technician
+F002,S2,C2-1,D2-1,2026-11-02T13:01:00+02:00,communication,major,Charger offline from the backend,2026-11-02T13:19:00+02:00,remote_reset
+F003,S3,C3-1,D3-2,2026-11-02T19:27:00+02:00,communication,major,Charger offline from the backend,2026-11-02T20:12:00+02:00,self
+F004,S2,C2-2,D2-8,2026-11-04T09:23:00+02:00,communication,major,Charger offline from the backend,2026-11-04T09:53:00+02:00,self
+F005,S3,C3-1,D3-4,2026-11-05T00:25:00+02:00,overtemperature,major,Charging stopped: overtemperature,2026-11-05T08:27:00+02:00,remote_reset
+F006,S4,C4-1,D4-2,2026-11-05T09:22:00+02:00,power_module,critical,"Output power limited, then stopped",2026-11-05T13:28:00+02:00,technician
+F007,S3,C3-3,D3-9,2026-11-06T07:29:00+02:00,overtemperature,major,Charging stopped: overtemperature,2026-11-06T12:51:00+02:00,technician
+F008,S2,C2-1,D2-1,2026-11-08T00:40:00+02:00,communication,major,Charger offline from the backend,2026-11-09T08:28:00+02:00,remote_reset
+F009,S2,C2-2,D2-5,2026-11-08T08:21:00+02:00,ground_fault,critical,Charging stopped: insulation fault,2026-11-08T11:53:00+02:00,technician
+F010,S1,C1-3,D1-9,2026-11-09T04:11:00+02:00,overtemperature,major,Charging stopped: overtemperature,2026-11-09T12:13:00+02:00,technician
+F011,S5,C5-2,D5-5,2026-11-09T19:30:00+02:00,communication,major,Charger offline from the backend,2026-11-10T12:10:00+02:00,technician
+F012,S1,C1-3,D1-12,2026-11-10T04:37:00+02:00,overtemperature,major,Charging stopped: overtemperature,2026-11-10T08:31:00+02:00,remote_reset
+F013,S4,C4-2,D4-5,2026-11-11T12:13:00+02:00,connector,critical,Connector lock / cable error,2026-11-11T17:05:00+02:00,technician
+F014,S3,C3-1,D3-3,2026-11-11T16:40:00+02:00,power_module,critical,"Output power limited, then stopped",,open
+F015,S1,C1-3,,2026-11-13T01:50:00+02:00,overtemperature,major,Cabinet derated to 50 %: overtemperature,2026-11-13T02:25:00+02:00,superseded
+F016,S1,C1-3,,2026-11-13T02:25:00+02:00,overtemperature,critical,Cabinet stopped: overtemperature,2026-11-13T06:31:00+02:00,technician
+F017,S4,C4-1,D4-2,2026-11-13T21:30:00+02:00,connector,critical,"Cable damage detected, dispenser locked out for safety",,open
+F018,S2,C2-1,D2-3,2026-11-14T01:45:00+02:00,communication,major,Charger offline from the backend,2026-11-14T02:30:00+02:00,self
+F019,S1,C1-3,D1-11,2026-11-15T22:01:00+02:00,communication,major,Charger offline from the backend,2026-11-15T22:21:00+02:00,self

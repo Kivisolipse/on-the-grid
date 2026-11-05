@@ -1,0 +1,6 @@
+site_id,name,type,grid_limit_kw,tariff_id,pv_kwp,latitude,longitude,connectivity_quality,in_operation_from
+S1,Bus depot North,private_depot,1200,T_DEPOT,0,,,good,2026-11-02
+S2,Logistics depot East,private_depot,800,T_DEPOT,0,,,good,2026-11-02
+S3,Highway hub,public_hub,1500,T_PUBLIC,0,,,weak,2026-11-02
+S4,City hub,public_hub,600,T_PUBLIC,100,,,good,2026-11-02
+S5,Bus depot South (new),private_depot,900,T_DEPOT,0,,,good,2026-11-09

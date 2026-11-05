@@ -1,0 +1,30 @@
+customer_id,customer,sites,contract_type,uptime_sla_pct,response_time_h,penalty_eur_per_late_departure,annual_fee_eur
+C1,City bus operator (fictional),S1;S5,hardware+service,97.0,4,150,96000
+C2,Logistics company (fictional),S2,hardware+basic_service,95.0,24,0,28000
+C3,The operator itself (own public sites),S3;S4,hardware+service,98.0,8,0,54000
+C04,Bus operator FI (fictional),FI-12,hardware,95.0,24,250,60300
+C05,Logistics operator FI (fictional),FI-15,hardware,98.0,4,0,38400
+C06,Logistics operator FI (fictional),FI-17,hardware,98.0,4,250,31500
+C07,Bus operator FI (fictional),FI-18,hardware+service,95.0,4,100,27300
+C08,Bus operator FI (fictional),FI-19,hardware+basic_service,98.0,8,100,31500
+C09,Logistics operator FI (fictional),FI-20,hardware,95.0,4,0,33100
+C10,Bus operator SE (fictional),SE-08,hardware,98.0,4,100,53800
+C11,Logistics operator SE (fictional),SE-13,hardware+basic_service,97.0,8,150,17100
+C12,Logistics operator SE (fictional),SE-18,hardware+basic_service,95.0,8,250,25900
+C13,Bus operator SE (fictional),SE-20,hardware+basic_service,97.0,24,0,33700
+C14,Bus operator SE (fictional),SE-21,hardware,97.0,4,150,32200
+C15,Logistics operator NO (fictional),NO-03,hardware,97.0,8,0,53600
+C16,Bus operator NO (fictional),NO-07,hardware+service,97.0,24,0,51000
+C17,Bus operator NO (fictional),NO-08,hardware+service,98.0,24,250,28800
+C18,Logistics operator NO (fictional),NO-09,hardware,97.0,24,250,30700
+C19,Bus operator NO (fictional),NO-10,hardware+basic_service,97.0,24,100,32400
+C20,Bus operator NO (fictional),NO-12,hardware+service,97.0,24,250,30800
+C21,Bus operator NO (fictional),NO-16,hardware+service,98.0,8,100,34000
+C22,Logistics operator DK (fictional),DK-04,hardware+service,95.0,8,0,48800
+C23,Logistics operator DK (fictional),DK-05,hardware,98.0,8,0,18000
+C24,Logistics operator DK (fictional),DK-06,hardware,95.0,8,150,55300
+C25,Logistics operator DK (fictional),DK-07,hardware+basic_service,97.0,8,0,25000
+C26,Bus operator DK (fictional),DK-10,hardware,95.0,8,250,49600
+C27,Logistics operator DE (fictional),DE-03,hardware+basic_service,98.0,4,100,26000
+C28,Logistics operator DE (fictional),DE-07,hardware+service,95.0,8,0,28200
+C29,Bus operator DE (fictional),DE-08,hardware+basic_service,97.0,24,150,29200

@@ -1,0 +1,7 @@
+part_id,description,stock_location,stock_qty,lead_time_days,unit_cost_eur
+P_CABLE_CCS2,Liquid-cooled CCS2 charging cable,Local service base,2,5,1400
+P_POWER_MODULE,DC power module,central warehouse,1,3,2600
+P_FAN,Cabinet cooling fan,Local service base,4,2,180
+P_AIR_FILTER,Cabinet air filter,Local service base,20,2,40
+P_MODEM,4G modem with antenna,Local service base,3,4,320
+P_PAYMENT,Payment terminal,central warehouse,2,5,650

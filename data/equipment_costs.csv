@@ -1,0 +1,11 @@
+item,unit,eur
+dc_charging_power,per kW installed,280
+dispenser_up_to_400kw,per unit,18000
+megawatt_dispenser,per unit,70000
+battery_storage_energy,per kWh,320
+battery_storage_power,per kW,110
+civil_works,per dispenser,9000
+site_design_and_permits,per site,25000
+solar_pv,per kWp,900
+technician_labour,per hour,80
+operations_staff,per hour,45

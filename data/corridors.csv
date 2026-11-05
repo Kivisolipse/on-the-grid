@@ -1,0 +1,13 @@
+route_id,from,to,countries,km,electric_trucks_per_day_2026,electric_trucks_per_day_2029_forecast,own_sites_on_route
+R01,Helsinki,Turku,FI,165,45,193,FI-01;FI-08;FI-13
+R02,Helsinki,Oulu,FI,610,157,796,FI-01;FI-04;FI-09
+R03,Turku,Stockholm,FI;SE (ferry),300,74,403,FI-08;FI-13;SE-01;SE-07;SE-25
+R04,Stockholm,Göteborg,SE,470,87,454,SE-01;SE-02;SE-07;SE-25
+R05,Stockholm,Malmö,SE,615,74,317,SE-01;SE-07;SE-09;SE-25
+R06,Oslo,Stockholm,NO;SE,520,46,242,SE-01;SE-07;SE-25;NO-06;NO-11
+R07,Oslo,Göteborg,NO;SE,290,66,204,SE-02;NO-06;NO-11
+R08,Malmö,Hamburg,SE;DK;DE,540,122,415,SE-09;DE-01;DE-06
+R09,Aarhus,Hamburg,DK;DE,340,148,784,DK-02;DE-01;DE-06
+R10,Hamburg,Kassel,DE,310,132,523,DE-01;DE-06;DE-13;DE-18
+R11,Berlin,Hamburg,DE,290,102,309,DE-01;DE-06;DE-19
+R12,Oslo,Trondheim,NO,495,33,118,NO-06;NO-11;NO-18

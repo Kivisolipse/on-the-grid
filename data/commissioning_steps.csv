@@ -1,0 +1,10 @@
+step_id,site_id,step,owner_role,planned_start,planned_end,actual_start,actual_end,waited_days,status,blocker,note
+S5-1,S5,site_survey,project_manager,2026-09-04,2026-09-07,2026-09-04,2026-09-07,0,done,,
+S5-2,S5,grid_connection_approval,dso,2026-09-07,2026-09-27,2026-09-07,2026-10-11,14,done,documentation_missing,
+S5-3,S5,civil_works,contractor,2026-09-27,2026-10-07,2026-10-11,2026-10-23,2,done,weather,
+S5-4,S5,installation,installer,2026-10-07,2026-10-11,2026-10-23,2026-10-27,0,done,,
+S5-5,S5,network_and_sim,installer,2026-10-11,2026-10-12,2026-10-27,2026-10-28,0,done,,SIMs ordered for 8 dispensers
+S5-6,S5,backend_connection,support,2026-10-12,2026-10-13,2026-10-28,2026-11-01,3,done,wrong_backend_address,
+S5-7,S5,configuration,commissioning_engineer,2026-10-13,2026-10-14,2026-11-01,2026-11-02,0,done,,Parameters copied from the S1 template and the grid offer
+S5-8,S5,test_charge_per_vehicle_type,commissioning_engineer,2026-10-14,2026-10-16,2026-11-02,2026-11-05,1,done,vehicle_compatibility,Test charges done on dispensers D5-1..D5-6
+S5-9,S5,handover,project_manager,2026-10-16,2026-10-17,2026-11-05,2026-11-06,0,done_with_open_items,,Handed over 2026-11-06; customer started operation 2026-11-09
