@@ -139,11 +139,12 @@ def call_planner(state, h):
 
     if llf_mod is not None:
         try:
-            out = llf_mod.plan(state)
+            llf_state = adapt_state_for_llf(state)
+            out = llf_mod.run_llf(llf_state) 
             if out is not None:
                 return out, "llf"
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[llf] Conversion or invocation failed: {e}")
 
     return DummyPlanner.plan(state), "dummy"
 
@@ -316,6 +317,39 @@ def simulate(force_dummy_planner=False):
     if len(df):
         print(df["planner"].value_counts().to_string())
 
+def adapt_state_for_llf(state):
+    """把 1 号的 state 转成 3 号 llf.run_llf 需要的格式。"""
+    vehicles_dict = {}
+    for v in state["vehicles"]:
+        depart_ts = v["depart_ts"]
+        if pd.isna(depart_ts):
+            deadline_str = "2099-12-31T23:59:59+02:00"
+        else:
+            deadline_str = depart_ts.isoformat()
+
+        # 如果 4 号改过 depart_slot，就用新的
+        slot_deadline_ts = state["t"] + v["depart_slot"] * SLOT
+        effective = slot_deadline_ts.isoformat()
+
+        vehicles_dict[v["id"]] = {
+            "cabinet_id": v["cabinet"],
+            "max_kw": v["max_kw"],
+            "remaining_kwh": v["need_kwh"],
+            "departure": deadline_str,
+            "effective_deadline": effective,
+        }
+
+    cabinets_dict = {}
+    for cab, limits in state["cabinets"].items():
+        cabinets_dict[cab] = {"available_kw": float(limits[0])}
+
+    return {
+        "time": state["t"].isoformat(),
+        "step_hours": SLOT_HOURS,
+        "site_limit_kw": float(state["site_limit"][0]),
+        "cabinets": cabinets_dict,
+        "vehicles": vehicles_dict,
+    }
 
 def main():
     parser = argparse.ArgumentParser()
