@@ -21,13 +21,8 @@ SITES = ["S1", "S2"]
 FAN_RPM_THRESHOLD = 550
 
 # Used by module 4 (real health); the dummy health in module 1 does not use it
-INJECTED_OUTAGES = {
-    "S1": [
-        (
-            pd.Timestamp("2026-11-13 01:00", tz=TZ),
-            pd.Timestamp("2026-11-13 03:00", tz=TZ),
-        )
-    ]
-}
+INJECTED_OUTAGES = [
+    ("S1", "2026-11-13T01:00:00+02:00", "2026-11-13T03:00:00+02:00")
+]
 
 LOG_PATH = OUTPUT_DIR / "log.csv"
