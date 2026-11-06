@@ -44,6 +44,7 @@ class DummyHealth:
         return {
             "online": True,
             "cabinet_factor": {},
+            "charger_factor": {},
             "deadline": {},
             "events": [],
         }
@@ -103,6 +104,13 @@ def apply_health(state, h):
             f = facs[i] if i < len(facs) else 1.0
             new_limits.append(float(lim) * f)
         state["cabinets"][cab] = new_limits
+
+    # Charger factors: a vehicle on a broken dispenser gets a lower (usually 0) max_kw.
+    # MPC, LLF and check_limits all read max_kw, so none of them can give it power.
+    for ch, fac in h.get("charger_factor", {}).items():
+        for v in state["vehicles"]:
+            if v["charger"] == str(ch):
+                v["max_kw"] = float(v["max_kw"]) * max(0.0, float(fac))
 
     # Deadlines
     for vid, new_dep in h.get("deadline", {}).items():
