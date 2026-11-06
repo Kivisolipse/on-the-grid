@@ -12,6 +12,8 @@ Contract 3 (see interfaces.md), called by main.py once per site and 15-minute sl
 Work orders follow the shift plan in technicians.csv: a fault goes to someone on shift, then on call,
 and only then to an off-shift call-out (named as such).  A predicted fan failure gets a preventive
 work order as soon as the warning appears, so the repair can be done inside a regular shift.
+Once that repair is finished the predicted failure does not happen: the cabinet is only off while
+the fan is replaced, and later overtemperature records of that cabinet are ignored.
 
 Rules:
   1. Only data from BEFORE t is used (no peeking into the future).  A fault that is active now
@@ -306,30 +308,32 @@ def _dispatch_event(f) -> str:
             f"dispatch {_who(tech, whole, f.start_ts)}, {_part_note(f.fault_category)}")
 
 
-def _preventive_event(site: str, cabinet: str, t: pd.Timestamp, predicted: pd.Timestamp) -> str:
-    """4.13 Work order for a predicted fan failure, sent to the technician when the warning appears.
+def _plan_preventive(site: str, t: pd.Timestamp, predicted: pd.Timestamp) -> dict | None:
+    """4.13 Who replaces the fan and when, decided when the warning appears.
 
     Preference: (1) someone on shift now who can finish before the shift ends,
     (2) the earliest next regular shift that still finishes in time,
     (3) only if no shift fits, a call-out planned in advance (not an emergency one).
     "In time" = DEADLINE_LEAD before the predicted failure, like the vehicle deadlines.
+    Returns None when there is no qualified technician with a known travel time.
     """
-    category = "overtemperature"
-    repair = _repair_time(CATEGORY_PART[category], t)
+    repair = _repair_time(CATEGORY_PART["overtemperature"], t)
     must_finish = predicted - DEADLINE_LEAD
-    head = (f"{t:%d.%m %H:%M} preventive work order {cabinet} (fan replacement, about "
-            f"{repair.total_seconds() / 60:.0f} min on site, {_part_note(category)}): ")
     techs = _technicians(site, whole_cabinet=True)
     techs = techs[np.isfinite(techs.travel)]
     if techs.empty:
-        return head + "no qualified technician with a known travel time"
+        return None
+
+    def plan(kind, r, start):
+        arrive = start + pd.Timedelta(minutes=r.travel)
+        return {"kind": kind, "tech": r.technician_id, "travel": r.travel, "start": start,
+                "arrive": arrive, "done": arrive + repair, "repair": repair}
 
     # 4.13.1 on shift now
     for r in techs.itertuples():
-        done = t + pd.Timedelta(minutes=r.travel) + repair
-        if _on_shift(r.shift_rule, t) and done <= min(_shift_end(r.shift_rule, t), must_finish):
-            return (head + f"send to {r.technician_id} now (on shift, {_away(r.travel)}), "
-                    f"done by about {done:%d.%m %H:%M}, before the predicted failure at {predicted:%d.%m %H:%M}")
+        p = plan("on shift", r, t)
+        if _on_shift(r.shift_rule, t) and p["done"] <= min(_shift_end(r.shift_rule, t), must_finish):
+            return p
 
     # 4.13.2 next regular shift
     best = None
@@ -337,19 +341,67 @@ def _preventive_event(site: str, cabinet: str, t: pd.Timestamp, predicted: pd.Ti
         start = _next_shift_start(r.shift_rule, t)
         if start is None:
             continue
-        done = start + pd.Timedelta(minutes=r.travel) + repair
-        if done <= min(_shift_end(r.shift_rule, start), must_finish) and (best is None or done < best[0]):
-            best = (done, r.technician_id, start, r.travel)
+        p = plan("next shift", r, start)
+        if p["done"] <= min(_shift_end(r.shift_rule, start), must_finish) and (best is None or p["done"] < best["done"]):
+            best = p
     if best is not None:
-        done, tid, start, travel = best
-        return (head + f"send to {tid} for the next shift {start:%d.%m %H:%M} ({_away(travel)}), "
-                f"done by about {done:%d.%m %H:%M}, before the predicted failure at {predicted:%d.%m %H:%M}")
+        return best
 
     # 4.13.3 no shift fits: plan the call-out now, so it is not a surprise at night
-    r = techs.iloc[0]
-    leave_by = max(t, must_finish - pd.Timedelta(minutes=r.travel) - repair)
-    return (head + f"no shift ends the job before the predicted failure at {predicted:%d.%m %H:%M}: "
-            f"plan a call-out for {r.technician_id}, leave by {leave_by:%d.%m %H:%M} ({_away(r.travel)})")
+    r = next(techs.itertuples())
+    return plan("call-out", r, max(t, must_finish - pd.Timedelta(minutes=r.travel) - repair))
+
+
+def _preventive_event(site: str, cabinet: str, t: pd.Timestamp, predicted: pd.Timestamp) -> str:
+    """4.14 Work order for a predicted fan failure, sent to the technician when the warning appears."""
+    category = "overtemperature"
+    head = (f"{t:%d.%m %H:%M} preventive work order {cabinet} (fan replacement, about "
+            f"{_repair_time(CATEGORY_PART[category], t).total_seconds() / 60:.0f} min on site, {_part_note(category)}): ")
+    p = _plan_preventive(site, t, predicted)
+    if p is None:
+        return head + "no qualified technician with a known travel time"
+    if p["kind"] == "call-out":
+        return (head + f"no shift ends the job before the predicted failure at {predicted:%d.%m %H:%M}: "
+                f"plan a call-out for {p['tech']}, leave by {p['start']:%d.%m %H:%M} ({_away(p['travel'])})")
+    when = "now (on shift, " if p["kind"] == "on shift" else f"for the next shift {p['start']:%d.%m %H:%M} ("
+    return (head + f"send to {p['tech']} {when}{_away(p['travel'])}), "
+            f"done by about {p['done']:%d.%m %H:%M}, before the predicted failure at {predicted:%d.%m %H:%M}")
+
+
+@lru_cache(maxsize=None)
+def _fan_repair(cabinet: str) -> dict | None:
+    """4.15 The preventive repair of a cabinet, from its first warning on the 15-minute grid.
+
+    None when nothing is predicted or the repair cannot finish before the predicted failure.
+    check() only uses the result from "warned" on, so nothing leaks from the future.
+    """
+    site, chargers = FAN_CABINETS[cabinet]
+    tel = _load()["tel"]
+    ts = tel.ts[tel.charger_id.isin(chargers)]
+    if ts.empty:
+        return None
+    for t in pd.date_range(ts.min().ceil("15min"), ts.max(), freq=SLOT):
+        p = predict_fan_failure(cabinet, t)
+        if p is not None:
+            plan = _plan_preventive(site, t, p["predicted"])
+            if plan is None or plan["done"] > p["predicted"]:
+                return None
+            return {**plan, **p, "warned": t}
+    return None
+
+
+def _repair_events(site: str, cabinet: str, t: pd.Timestamp, r: dict) -> list[str]:
+    """4.16 Log lines of a preventive repair, each in the slot it happens."""
+    out = []
+    if t == r["warned"]:
+        out.append(f"{t:%d.%m %H:%M} predict {cabinet} overtemperature at {r['predicted']:%d.%m %H:%M} "
+                   f"(fan {r['rpm_now']:.0f} rpm, {r['slope_rpm_h']:.0f} rpm/h)")
+        out.append(_preventive_event(site, cabinet, t, r["predicted"]))
+    if t - SLOT < r["arrive"] <= t:
+        out.append(f"{r['arrive']:%d.%m %H:%M} {cabinet} off: {r['tech']} is replacing the fan")
+    if t - SLOT < r["done"] <= t:
+        out.append(f"{r['done']:%d.%m %H:%M} {cabinet} back on: {r['tech']} replaced the fan, predicted failure avoided")
+    return out
 
 
 # ---------------------------------------------------------------- 5. the contract function
@@ -380,6 +432,10 @@ def check(site: str, t, vehicles: list | None = None) -> dict:
     # 5.4 real faults active at t (started, not cleared by t); whole-cabinet faults change the factor
     fl = data["faults"]
     fl = fl[fl.site_id == site]
+    for cab, (cab_site, _) in FAN_CABINETS.items():                    # 5.4.0 a finished repair stops the overheating
+        r = _fan_repair(cab) if cab_site == site else None
+        if r is not None and r["warned"] <= t:
+            fl = fl[~((fl.cabinet_id == cab) & (fl.fault_category == "overtemperature") & (fl.start_ts >= r["done"]))]
     active = fl[(fl.start_ts <= t) & ~(fl.cleared_ts <= t)]           # NaT (still open) counts as active
     for f in active.itertuples(index=False):
         if isinstance(f.charger_id, str):
@@ -398,6 +454,12 @@ def check(site: str, t, vehicles: list | None = None) -> dict:
     for cab, (cab_site, _) in FAN_CABINETS.items():
         if cab_site != site:
             continue                                                   # 5.6.1 cabinet belongs to another site
+        r = _fan_repair(cab)
+        if r is not None and r["warned"] <= t:                         # 5.6.1a repair planned: off only while it runs
+            events.extend(_repair_events(site, cab, t, r))
+            row = factor.setdefault(cab, [1.0] * H)
+            factor[cab] = [0.0 if s < r["done"] and s + SLOT > r["arrive"] else x for s, x in zip(slot_start, row)]
+            continue
         p = predict_fan_failure(cab, t)
         if p is None:
             continue
@@ -423,8 +485,8 @@ def check(site: str, t, vehicles: list | None = None) -> dict:
 # ---------------------------------------------------------------- 6. self-test
 if __name__ == "__main__":
     # 6.1 S1 from 12.11 12:00 to 13.11 03:00, one line per slot:
-    #     the prediction must appear before 01:50, the slot-0 factor of C1-3 must be 0.5 from
-    #     01:50 and 0 from 02:25.  Run:  KEMPOWER_DATA=/path/to/data python health.py
+    #     the prediction must appear at 13:30, the slot-0 factor of C1-3 must be 0 only while
+    #     the fan is replaced, then stay 1 through the night.  Run:  KEMPOWER_DATA=/path/to/data python health.py
     fake = [{"id": "B10", "cabinet": "C1-3", "depart_slot": 48}]
     for t in pd.date_range("2026-11-12T12:00:00+02:00", "2026-11-13T03:00:00+02:00", freq="15min"):
         h = check("S1", t, fake)

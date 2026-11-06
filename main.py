@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 
 from config import (
+    DATA_DIR,
     TZ,
     SIM_START,
     SIM_END,
@@ -30,6 +31,12 @@ try:
     import health as health_mod
 except Exception:
     health_mod = None
+
+try:
+    import relay as relay_mod
+    relay_mod.DATA_DIR = str(DATA_DIR)
+except Exception:
+    relay_mod = None
 
 
 class DummyHealth:
@@ -211,20 +218,43 @@ def safe_check_health(site, t, state, dummy_health):
             print(f"[health] back to dummy: {e}")
     return dummy_health.check(site, t, vehicles=state["vehicles"])
 
-def simulate(force_dummy_planner=False):
+def build_state(site, t, use_relay, avoid_cabinets=()):
+    """Main loop step 1: who is on site and who is plugged in."""
+    if not use_relay:
+        return data.get_state(site, t)
+
+    state = relay_mod.apply(data.get_state(site, t, use_sessions=False), avoid_cabinets)
+    waiting = set(state["waiting"])
+    state["parked"] = [v for v in state["all_vehicles"] if v["id"] in waiting]
+    return state
+
+
+def simulate(force_dummy_planner=False, baseline_plugs=False):
     OUTPUT_DIR.mkdir(exist_ok=True)
     data.reset_soc()
+
+    use_relay = relay_mod is not None and not baseline_plugs
+    if use_relay:
+        relay_mod.reset()
 
     rows = []
     dummy_health = DummyHealth()
 
     for site in SITES:
         t = SIM_START
+        avoid_cabinets = ()
 
         while t < SIM_END:
-            state = data.get_state(site, t)
+            state = build_state(site, t, use_relay, avoid_cabinets)
 
             h = safe_check_health(site, t, state, dummy_health)
+
+            # Relay runs before health, so it acts on the previous slot's result:
+            # cabinets that are derated or stopped right now
+            avoid_cabinets = tuple(
+                cab for cab, fac in h.get("cabinet_factor", {}).items()
+                if _factor_list(fac)[0] < 1.0
+            )
 
             state = apply_health(state, h)
 
@@ -239,6 +269,15 @@ def simulate(force_dummy_planner=False):
             ev = h.get("events", [])
             events_text = ev if isinstance(ev, str) else " | ".join(str(x) for x in ev)
 
+            # One row per relay event, so member 3 can count them by tag
+            for e in state.get("relay_events", []):
+                rows.append({
+                    "row_type": "relay",
+                    "t": t.isoformat(),
+                    "site": site,
+                    "events": e,
+                })
+
             # Write charge rows and update SoC
             for v in state["vehicles"]:
                 kw = float(plan.get(v["id"], 0.0))
@@ -248,7 +287,7 @@ def simulate(force_dummy_planner=False):
                 delta_soc = energy_kwh / v["battery_kwh"] * 100.0
                 soc_after = min(100.0, soc_before + delta_soc)
 
-                data.update_soc(site, v["session_id"], soc_after)
+                data.update_soc(site, v["visit_id"], soc_after)
 
                 cab_limit = None
                 if v["cabinet"] in state["cabinets"]:
@@ -275,16 +314,18 @@ def simulate(force_dummy_planner=False):
                     "depart_ts": "" if pd.isna(v["depart_ts"]) else v["depart_ts"].isoformat(),
                 })
 
-            # Departure rows: add one extra row for vehicles departing in this slot
-            for v in state["vehicles"]:
+            # Departure rows: add one extra row for vehicles departing in this slot,
+            # plugged in or not
+            for v in state["vehicles"] + state["parked"]:
                 dep_ts = v["depart_ts"]
                 if pd.isna(dep_ts):
                     continue
                 if t < dep_ts <= t + SLOT:
-                    soc_after = data.get_soc(site, v["session_id"])
+                    soc_after = data.get_soc(site, v["visit_id"])
                     if soc_after is None:
                         soc_after = v["soc"]
-                    below = int(soc_after + 1e-9 < v["required_soc_pct"])
+                    # 1e-6: the MPC solver can land about 1e-7 % short of the target
+                    below = int(soc_after + 1e-6 < v["required_soc_pct"])
 
                     rows.append({
                         "row_type": "departure",
@@ -358,8 +399,13 @@ def main():
         action="store_true",
         help="Force the dummy planner (every vehicle at max_kw) to smoke-test the main loop",
     )
+    parser.add_argument(
+        "--baseline-plugs",
+        action="store_true",
+        help="Replay the plug-ins of sessions_baseline.csv instead of running relay.py",
+    )
     args = parser.parse_args()
-    simulate(force_dummy_planner=args.dummy_planner)
+    simulate(force_dummy_planner=args.dummy_planner, baseline_plugs=args.baseline_plugs)
 
 
 if __name__ == "__main__":

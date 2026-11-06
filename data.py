@@ -12,7 +12,8 @@ from config import (
 # Cache for CSV files
 _CACHE = {}
 
-# Current SoC, key = (site, session_id)
+# Current SoC, key = (site, visit_id). A visit is one fleet_schedule row, so SoC
+# carries over between plug-ins and starts fresh when the vehicle comes back.
 SOC = {}
 
 
@@ -21,12 +22,12 @@ def reset_soc():
     SOC = {}
 
 
-def get_soc(site, session_id):
-    return SOC.get((site, str(session_id)), None)
+def get_soc(site, visit_id):
+    return SOC.get((site, str(visit_id)), None)
 
 
-def update_soc(site, session_id, new_soc):
-    SOC[(site, str(session_id))] = float(max(0.0, min(100.0, new_soc)))
+def update_soc(site, visit_id, new_soc):
+    SOC[(site, str(visit_id))] = float(max(0.0, min(100.0, new_soc)))
 
 
 def _load(name, time_cols=()):
@@ -192,29 +193,17 @@ def _vehicle_row(vehicle_id):
     return row.iloc[0]
 
 
-def _find_schedule(vehicle_id, site, t):
+def _visits_on_site(site, t):
     """
-    Find the fleet_schedule row that is active at time t:
+    fleet_schedule rows with the vehicle on site at time t:
     arrive_ts <= t and (depart_ts is empty or depart_ts > t).
-    If multiple rows match, take the one with the latest arrive_ts.
     """
     fs = _load("fleet_schedule.csv", ["arrive_ts", "depart_ts"])
-    sub = fs[
-        (fs["vehicle_id"] == vehicle_id)
-        & (fs["site_id"] == site)
+    return fs[
+        (fs["site_id"] == site)
         & (fs["arrive_ts"] <= t)
+        & (fs["depart_ts"].isna() | (fs["depart_ts"] > t))
     ]
-    if sub.empty:
-        return None
-
-    active = sub[
-        sub["depart_ts"].isna()
-        | (sub["depart_ts"] > t)
-    ]
-    if active.empty:
-        return None
-
-    return active.sort_values("arrive_ts").iloc[-1]
 
 
 def _depart_slot(depart_ts, t):
@@ -226,9 +215,23 @@ def _depart_slot(depart_ts, t):
     return min(HORIZON, int(np.ceil(delta / SLOT)))
 
 
-def get_state(site, t):
+def _tapered(max_kw, soc):
+    """Taper above 80% SoC."""
+    if soc > 80.0:
+        return max_kw * max(0.0, (100.0 - soc) / 20.0)
+    return max_kw
+
+
+def get_state(site, t, use_sessions=True):
     """
     Build the state dict defined by Convention 1.
+
+    Presence comes from fleet_schedule.csv; sessions_baseline.csv only says who
+    is plugged in. "vehicles" holds the plugged-in vehicles the planners can
+    charge. "parked" holds the others on site: same keys, no charger, max_kw 0.
+
+    use_sessions=False is the input for relay.apply: "vehicles" holds everyone on
+    site with no charger yet, and max_kw is the vehicle's own limit.
     """
     t = _as_tz(t)
 
@@ -237,78 +240,69 @@ def get_state(site, t):
     cabinets = _cabinet_limits(site)
 
     sess = _load("sessions_baseline.csv", ["start_ts", "end_ts"])
-    active = sess[
+    plugged = sess[
         (sess["site_id"] == site)
         & (sess["start_ts"] <= t)
         & (sess["end_ts"] > t)
-    ]
+    ].set_index("vehicle_id")
 
     vehicles = []
+    parked = []
 
-    for _, s in active.iterrows():
-        vid = s.get("vehicle_id")
-        if pd.isna(vid) or str(vid) == "":
-            continue
-
-        vid = str(vid)
-        sid = str(s["session_id"])
-        charger_id = str(s["charger_id"])
-
-        ch = _charger_row(charger_id)
-        if ch is None:
-            continue
-
+    for _, visit in _visits_on_site(site, t).iterrows():
+        vid = str(visit["vehicle_id"])
+        visit_id = f"{vid}@{visit['arrive_ts'].isoformat()}"
         veh = _vehicle_row(vid)
-        if veh is None:
-            continue
 
-        sched = _find_schedule(vid, site, t)
-
-        key = (site, sid)
+        key = (site, visit_id)
         if key not in SOC:
-            if sched is not None and not pd.isna(sched.get("arrive_soc_pct")):
-                SOC[key] = float(sched["arrive_soc_pct"])
-            else:
-                SOC[key] = 100.0
+            SOC[key] = float(visit["arrive_soc_pct"])
 
         soc = float(SOC[key])
         battery_kwh = float(veh["battery_kwh"])
-
-        if sched is not None and not pd.isna(sched.get("required_soc_pct")):
-            required_soc_pct = float(sched["required_soc_pct"])
-        else:
-            required_soc_pct = soc
-
-        depart_ts = sched.get("depart_ts") if sched is not None else pd.NaT
-        depart_slot = _depart_slot(depart_ts, t)
-
-        charger_max = float(ch["max_kw"])
-        vehicle_max = float(veh["max_charge_kw"])
-        max_kw = min(charger_max, vehicle_max)
-
-        # Taper above 80% SoC
-        if soc > 80.0:
-            max_kw = max_kw * max(0.0, (100.0 - soc) / 20.0)
-        max_kw = max(0.0, max_kw)
+        required_soc_pct = float(visit["required_soc_pct"])
+        depart_ts = visit["depart_ts"]
 
         need_kwh = max(
             0.0,
             (required_soc_pct - soc) / 100.0 * battery_kwh,
         )
 
-        vehicles.append({
+        v = {
             "id": vid,
-            "session_id": sid,
-            "charger": charger_id,
-            "cabinet": str(ch["cabinet_id"]),
+            "visit_id": visit_id,
+            "session_id": None,
+            "charger": None,
+            "cabinet": None,
             "soc": soc,
             "battery_kwh": battery_kwh,
-            "max_kw": max_kw,
+            "max_kw": 0.0,
             "need_kwh": need_kwh,
-            "depart_slot": depart_slot,
+            "depart_slot": _depart_slot(depart_ts, t),
             "depart_ts": depart_ts,
             "required_soc_pct": required_soc_pct,
-        })
+        }
+
+        if not use_sessions:
+            v["max_kw"] = _tapered(float(veh["max_charge_kw"]), soc)
+            vehicles.append(v)
+            continue
+
+        if vid not in plugged.index:
+            parked.append(v)
+            continue
+
+        s = plugged.loc[vid]
+        ch = _charger_row(str(s["charger_id"]))
+
+        charger_max = float(ch["max_kw"])
+        vehicle_max = float(veh["max_charge_kw"])
+
+        v["session_id"] = str(s["session_id"])
+        v["charger"] = str(s["charger_id"])
+        v["cabinet"] = str(ch["cabinet_id"])
+        v["max_kw"] = _tapered(min(charger_max, vehicle_max), soc)
+        vehicles.append(v)
 
     return {
         "t": t,
@@ -317,4 +311,5 @@ def get_state(site, t):
         "site_limit": site_limit,
         "cabinets": cabinets,
         "vehicles": vehicles,
+        "parked": parked,
     }
