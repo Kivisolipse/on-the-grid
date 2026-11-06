@@ -9,6 +9,10 @@ Contract 3 (see interfaces.md), called by main.py once per site and 15-minute sl
     h["deadline"]        {vehicle_id: new depart_slot}, only vehicles that must be done earlier
     h["events"]          [str], human-readable log lines for log.csv and the pitch
 
+Work orders follow the shift plan in technicians.csv: a fault goes to someone on shift, then on call,
+and only then to an off-shift call-out (named as such).  A predicted fan failure gets a preventive
+work order as soon as the warning appears, so the repair can be done inside a regular shift.
+
 Rules:
   1. Only data from BEFORE t is used (no peeking into the future).  A fault that is active now
      is assumed to last for the whole horizon, because nobody knows yet when it will clear.
@@ -20,6 +24,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from functools import lru_cache
 
 import numpy as np
@@ -54,6 +59,10 @@ CATEGORY_PART = {
 
 # 1.12 injected outage for the demo; config.INJECTED_OUTAGES overrides it if config.py defines it
 INJECTED_OUTAGES = [("S1", "2026-11-13T01:00:00+02:00", "2026-11-13T03:00:00+02:00")]
+
+# 1.13 on-site repair time when service_tickets.csv has no earlier repair with the same part
+DEFAULT_REPAIR = pd.Timedelta(minutes=90)
+WEEKDAY = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
 
 
 # ---------------------------------------------------------------- 2. data loading
@@ -110,17 +119,26 @@ def _load() -> dict:
     out = pd.concat([out, inj], ignore_index=True)
     out["start_ts"], out["end_ts"] = _ts(out.start_ts), _ts(out.end_ts)
 
-    # 2.5.4 who can fix what, spare parts, travel times (optional file)
+    # 2.5.4 who can fix what and when, spare parts, travel times (optional file)
     techs = read("technicians.csv")
+    techs["shift_rule"] = techs["shift"].map(_parse_shift)   # not techs.shift: that is DataFrame.shift()
     parts = read("spare_parts.csv").set_index("part_id")
     travel_path = os.path.join(d, "travel_times.csv")
     travel = pd.read_csv(travel_path) if os.path.exists(travel_path) else None
 
-    # 2.5.5 cabinets per site, so cabinet_factor lists every cabinet (default 1)
+    # 2.5.5 past work orders, used to estimate how long a repair takes on site (optional file)
+    tickets_path = os.path.join(d, "service_tickets.csv")
+    tickets = pd.read_csv(tickets_path) if os.path.exists(tickets_path) else None
+    if tickets is not None:
+        tickets["arrived_ts"] = _ts(tickets.arrived_ts)
+        tickets["closed_ts"] = _ts(tickets.closed_ts)
+
+    # 2.5.6 cabinets per site, so cabinet_factor lists every cabinet (default 1)
     cab_path = os.path.join(d, "power_cabinets.csv")
     cabinets = pd.read_csv(cab_path)[["cabinet_id", "site_id"]] if os.path.exists(cab_path) else None
 
-    return dict(tel=tel, faults=faults, outages=out, techs=techs, parts=parts, travel=travel, cabinets=cabinets)
+    return dict(tel=tel, faults=faults, outages=out, techs=techs, parts=parts, travel=travel,
+                tickets=tickets, cabinets=cabinets)
 
 
 # ---------------------------------------------------------------- 3. fan prediction
@@ -156,21 +174,116 @@ def predict_fan_failure(cabinet: str, t) -> dict | None:
     return {"predicted": predicted, "slope_rpm_h": float(slope), "rpm_now": float(rpm_now)}
 
 
-# ---------------------------------------------------------------- 4. dispatch
-def _pick_technician(site: str, whole_cabinet: bool) -> str:
-    """4.1 A cabinet fault needs the 'cabinet' skill (TE1 or TE3, not TE2); pick the closest one."""
+# ---------------------------------------------------------------- 4. technicians and dispatch
+def _parse_shift(text) -> dict:
+    """4.1 'Mon-Fri 08-16, on-call week 46' -> {days: {0..4}, start: 8, end: 16, on_call_weeks: {46}}.
+
+    on call = reachable outside the regular shift during that ISO week.
+    """
+    text = str(text)
+    rule = {"days": set(), "start": 0, "end": 0, "on_call_weeks": set()}
+    day = "|".join(WEEKDAY)
+    m = re.search(rf"({day})-({day})\s+(\d{{1,2}})-(\d{{1,2}})", text)
+    if m:
+        rule["days"] = set(range(WEEKDAY[m[1]], WEEKDAY[m[2]] + 1))
+        rule["start"], rule["end"] = int(m[3]), int(m[4])
+    rule["on_call_weeks"] = {int(w) for w in re.findall(r"on-call week (\d+)", text)}
+    return rule
+
+
+def _on_shift(rule: dict, t: pd.Timestamp) -> bool:
+    """4.2 Inside the regular shift at t."""
+    return t.weekday() in rule["days"] and rule["start"] <= t.hour + t.minute / 60 < rule["end"]
+
+
+def _on_call(rule: dict, t: pd.Timestamp) -> bool:
+    """4.3 On call at t: the on-call week, outside the regular shift."""
+    return t.isocalendar().week in rule["on_call_weeks"] and not _on_shift(rule, t)
+
+
+def _shift_end(rule: dict, t: pd.Timestamp) -> pd.Timestamp:
+    """4.4 End of the regular shift on the day of t."""
+    return t.normalize() + pd.Timedelta(hours=rule["end"])
+
+
+def _next_shift_start(rule: dict, t: pd.Timestamp) -> pd.Timestamp | None:
+    """4.5 First regular shift start after t (None if the technician has no regular shift)."""
+    for k in range(8):
+        day = t.normalize() + pd.Timedelta(days=k)
+        start = day + pd.Timedelta(hours=rule["start"])
+        if day.weekday() in rule["days"] and start > t:
+            return start
+    return None
+
+
+def _technicians(site: str, whole_cabinet: bool) -> pd.DataFrame:
+    """4.6 Technicians who can do the job, closest first.
+
+    A cabinet fault needs the 'cabinet' skill (TE1 or TE3, not TE2).
+    """
     data = _load()
     techs = data["techs"]
     if whole_cabinet:
         techs = techs[techs.skills.str.contains("cabinet")]
     if data["travel"] is not None:
         tr = data["travel"][data["travel"].site_id == site].set_index("technician_id").travel_min
-        techs = techs.assign(travel=techs.technician_id.map(tr).fillna(math.inf)).sort_values("travel")
-    return str(techs.technician_id.iloc[0])
+        techs = techs.assign(travel=techs.technician_id.map(tr).fillna(math.inf))
+    else:
+        techs = techs.assign(travel=math.inf)
+    return techs.sort_values("travel")
+
+
+def _pick_technician(site: str, whole_cabinet: bool, t: pd.Timestamp) -> dict:
+    """4.7 Respect the shift plan: on shift first, then on call, else call out the closest one."""
+    techs = _technicians(site, whole_cabinet)
+    if techs.empty:
+        return {"id": None, "status": "none", "travel": math.inf, "next_shift": None}
+    for status, available in (("on shift", _on_shift), ("on call", _on_call)):
+        hit = techs[[available(rule, t) for rule in techs.shift_rule]]
+        if not hit.empty:
+            r = hit.iloc[0]
+            return {"id": r.technician_id, "status": status, "travel": r.travel, "next_shift": None}
+    r = techs.iloc[0]
+    return {"id": r.technician_id, "status": "call-out", "travel": r.travel,
+            "next_shift": _next_shift_start(r.shift_rule, t)}
+
+
+def _away(travel: float) -> str:
+    """4.8 '15 min away', or 'travel time unknown'."""
+    return f"{travel:.0f} min away" if np.isfinite(travel) else "travel time unknown"
+
+
+def _who(tech: dict, whole_cabinet: bool, t: pd.Timestamp) -> str:
+    """4.9 'TE1 (on shift, 15 min away)', or the call-out with the reason why nobody closer in time can go."""
+    if tech["id"] is None:
+        return "no qualified technician"
+    if tech["status"] != "call-out":
+        return f"{tech['id']} ({tech['status']}, {_away(tech['travel'])})"
+    note = f"{tech['id']} (off shift, call-out, {_away(tech['travel'])}"
+    if tech["next_shift"] is not None:
+        note += f"; next shift {tech['next_shift']:%d.%m %H:%M}"
+    if whole_cabinet:
+        techs = _load()["techs"]
+        unskilled = [r.technician_id for r in techs.itertuples()
+                     if _on_call(r.shift_rule, t) and "cabinet" not in r.skills]
+        if unskilled:
+            note += f"; on-call {', '.join(unskilled)} lacks cabinet skill"
+    return note + ")"
+
+
+def _repair_time(part: str | None, t: pd.Timestamp) -> pd.Timedelta:
+    """4.10 Median time on site (arrived -> closed) of earlier repairs with the same part."""
+    tickets = _load()["tickets"]
+    if tickets is None or part is None:
+        return DEFAULT_REPAIR
+    done = tickets[(tickets.part_id == part) & (tickets.closed_ts < t) & tickets.arrived_ts.notna()]
+    if done.empty:
+        return DEFAULT_REPAIR
+    return (done.closed_ts - done.arrived_ts).median()
 
 
 def _part_note(category: str) -> str:
-    """4.2 Which spare part, and whether it is on the shelf or must be ordered."""
+    """4.11 Which spare part, and whether it is on the shelf or must be ordered."""
     part = CATEGORY_PART.get(category)
     if part is None:
         return "no part (inspection)"
@@ -184,13 +297,59 @@ def _part_note(category: str) -> str:
 
 
 def _dispatch_event(f) -> str:
-    """4.3 One work order line per fault, written in the round the fault first shows up."""
+    """4.12 One work order line per fault, written in the round the fault first shows up."""
     whole = not isinstance(f.charger_id, str)
-    tech = _pick_technician(f.site_id, whole)
+    tech = _pick_technician(f.site_id, whole, f.start_ts)
     where = f.cabinet_id if whole else f"{f.cabinet_id}/{f.charger_id}"
     action = "stopped" if f.severity == "critical" else "derated"
     return (f"{f.start_ts:%d.%m %H:%M} {where} {action} ({f.fault_category}, {f.severity}): "
-            f"dispatch {tech}, {_part_note(f.fault_category)}")
+            f"dispatch {_who(tech, whole, f.start_ts)}, {_part_note(f.fault_category)}")
+
+
+def _preventive_event(site: str, cabinet: str, t: pd.Timestamp, predicted: pd.Timestamp) -> str:
+    """4.13 Work order for a predicted fan failure, sent to the technician when the warning appears.
+
+    Preference: (1) someone on shift now who can finish before the shift ends,
+    (2) the earliest next regular shift that still finishes in time,
+    (3) only if no shift fits, a call-out planned in advance (not an emergency one).
+    "In time" = DEADLINE_LEAD before the predicted failure, like the vehicle deadlines.
+    """
+    category = "overtemperature"
+    repair = _repair_time(CATEGORY_PART[category], t)
+    must_finish = predicted - DEADLINE_LEAD
+    head = (f"{t:%d.%m %H:%M} preventive work order {cabinet} (fan replacement, about "
+            f"{repair.total_seconds() / 60:.0f} min on site, {_part_note(category)}): ")
+    techs = _technicians(site, whole_cabinet=True)
+    techs = techs[np.isfinite(techs.travel)]
+    if techs.empty:
+        return head + "no qualified technician with a known travel time"
+
+    # 4.13.1 on shift now
+    for r in techs.itertuples():
+        done = t + pd.Timedelta(minutes=r.travel) + repair
+        if _on_shift(r.shift_rule, t) and done <= min(_shift_end(r.shift_rule, t), must_finish):
+            return (head + f"send to {r.technician_id} now (on shift, {_away(r.travel)}), "
+                    f"done by about {done:%d.%m %H:%M}, before the predicted failure at {predicted:%d.%m %H:%M}")
+
+    # 4.13.2 next regular shift
+    best = None
+    for r in techs.itertuples():
+        start = _next_shift_start(r.shift_rule, t)
+        if start is None:
+            continue
+        done = start + pd.Timedelta(minutes=r.travel) + repair
+        if done <= min(_shift_end(r.shift_rule, start), must_finish) and (best is None or done < best[0]):
+            best = (done, r.technician_id, start, r.travel)
+    if best is not None:
+        done, tid, start, travel = best
+        return (head + f"send to {tid} for the next shift {start:%d.%m %H:%M} ({_away(travel)}), "
+                f"done by about {done:%d.%m %H:%M}, before the predicted failure at {predicted:%d.%m %H:%M}")
+
+    # 4.13.3 no shift fits: plan the call-out now, so it is not a surprise at night
+    r = techs.iloc[0]
+    leave_by = max(t, must_finish - pd.Timedelta(minutes=r.travel) - repair)
+    return (head + f"no shift ends the job before the predicted failure at {predicted:%d.%m %H:%M}: "
+            f"plan a call-out for {r.technician_id}, leave by {leave_by:%d.%m %H:%M} ({_away(r.travel)})")
 
 
 # ---------------------------------------------------------------- 5. the contract function
@@ -246,6 +405,7 @@ def check(site: str, t, vehicles: list | None = None) -> dict:
             events.append(f"{t:%d.%m %H:%M} predict {cab} overtemperature at {p['predicted']:%d.%m %H:%M} "
                           f"(fan {p['rpm_now']:.0f} rpm, {p['slope_rpm_h']:.0f} rpm/h): "
                           f"vehicles on {cab} must finish by {p['predicted'] - DEADLINE_LEAD:%H:%M}")
+            events.append(_preventive_event(site, cab, t, p["predicted"]))   # 5.6.2a warn the technician now
         row = factor.setdefault(cab, [1.0] * H)
         for j in range(1, H):                                          # 5.6.3 slot 0 = measured state, not a forecast
             if slot_start[j] + SLOT > p["predicted"]:
