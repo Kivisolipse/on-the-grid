@@ -6,6 +6,8 @@ Contract 3 (see interfaces.md), called by main.py once per site and 15-minute sl
 
     h["online"]          bool: can the site reach the cloud backend at t
     h["cabinet_factor"]  {cabinet_id: [48 floats]}, each value 1, 0.5 or 0, slot j = [t + 15j, t + 15j + 15)
+    h["charger_factor"]  {charger_id: float}, only dispensers with an active fault, 0 = cannot charge;
+                         like a cabinet fault it is assumed to last the whole horizon
     h["deadline"]        {vehicle_id: new depart_slot}, only vehicles that must be done earlier
     h["events"]          [str], human-readable log lines for log.csv and the pitch
 
@@ -46,6 +48,12 @@ FAN_CABINETS = {"C1-3": ("S1", ["D1-9", "D1-10", "D1-11", "D1-12"])}
 
 # 1.10 severity -> remaining capacity of the affected cabinet
 SEVERITY_FACTOR = {"major": 0.5, "critical": 0.0}
+
+# 1.10a single-dispenser fault category -> what that dispenser can still deliver.
+#       Every dispenser fault in faults.csv stops or locks the dispenser ("charging stopped",
+#       "locked out", "insulation fault"), except "communication": the dispenser is only offline
+#       from the backend and keeps charging under local control.  Unknown categories -> 0 (safe side).
+CHARGER_FACTOR = {"communication": 1.0}
 
 # 1.11 fault category -> spare part that usually fixes it (None = inspection only)
 CATEGORY_PART = {
@@ -381,9 +389,13 @@ def check(site: str, t, vehicles: list | None = None) -> dict:
     fl = data["faults"]
     fl = fl[fl.site_id == site]
     active = fl[(fl.start_ts <= t) & ~(fl.cleared_ts <= t)]           # NaT (still open) counts as active
+    charger_factor: dict = {}
     for f in active.itertuples(index=False):
         if isinstance(f.charger_id, str):
-            continue                                                   # 5.4.1 one dispenser down: not a cabinet limit
+            # 5.4.1 one dispenser down: not a cabinet limit, but that dispenser cannot deliver power
+            k = CHARGER_FACTOR.get(f.fault_category, 0.0)
+            charger_factor[f.charger_id] = min(charger_factor.get(f.charger_id, 1.0), k)
+            continue
         k = SEVERITY_FACTOR.get(f.severity, 0.0)
         row = factor.setdefault(f.cabinet_id, [1.0] * H)
         factor[f.cabinet_id] = [min(x, k) for x in row]                # 5.4.2 assume it lasts the whole horizon
@@ -417,7 +429,8 @@ def check(site: str, t, vehicles: list | None = None) -> dict:
             if v.get("cabinet") == cab and new_slot < v.get("depart_slot", H):
                 deadline[v["id"]] = new_slot
 
-    return {"online": online, "cabinet_factor": factor, "deadline": deadline, "events": events}
+    return {"online": online, "cabinet_factor": factor, "charger_factor": charger_factor,
+            "deadline": deadline, "events": events}
 
 
 # ---------------------------------------------------------------- 6. self-test
