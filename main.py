@@ -286,6 +286,16 @@ def simulate(force_dummy_planner=False, baseline_plugs=False):
                     "events": e,
                 })
 
+            # One row per health event too, so an event is not lost when no vehicle is plugged in
+            for e in ([ev] if isinstance(ev, str) else ev):
+                if str(e).strip():
+                    rows.append({
+                        "row_type": "health",
+                        "t": t.isoformat(),
+                        "site": site,
+                        "events": str(e),
+                    })
+
             # Write charge rows and update SoC
             for v in state["vehicles"]:
                 kw = float(plan.get(v["id"], 0.0))

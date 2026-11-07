@@ -7,6 +7,7 @@ from config import (
     HORIZON,
     SLOT,
     SLOT_HOURS,
+    SIM_START,
 )
 
 # Cache for CSV files
@@ -257,6 +258,10 @@ def get_state(site, t, use_sessions=True):
         key = (site, visit_id)
         if key not in SOC:
             SOC[key] = float(visit["arrive_soc_pct"])
+            # Warm-up: the vehicle arrived before the simulation started, so the system
+            # has already been charging it; assume it already has its required SoC.
+            if visit["arrive_ts"] < SIM_START:
+                SOC[key] = max(SOC[key], float(visit["required_soc_pct"]))
 
         soc = float(SOC[key])
         battery_kwh = float(veh["battery_kwh"])

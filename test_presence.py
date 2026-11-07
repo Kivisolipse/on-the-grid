@@ -107,7 +107,7 @@ class TestRelay(unittest.TestCase):
 
     def test_relay_events_are_one_tagged_row_each(self):
         self.assertTrue(len(self.relay))
-        self.assertTrue(self.relay["events"].str.match(r"^\[(driver|wait|visit|on-call)\]").all())
+        self.assertTrue(self.relay["events"].str.match(r"^\[(driver|wait|visit|on-call|leave)\]").all())
 
     def test_drivers_only_plug_their_own_vehicle(self):
         driver = self.relay[self.relay["events"].str.startswith("[driver]")]
