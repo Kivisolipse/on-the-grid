@@ -1,4 +1,5 @@
 """Vehicle presence comes from fleet_schedule.csv; plug-ins come from relay.py or sessions_baseline.csv."""
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -107,7 +108,7 @@ class TestRelay(unittest.TestCase):
 
     def test_relay_events_are_one_tagged_row_each(self):
         self.assertTrue(len(self.relay))
-        self.assertTrue(self.relay["events"].str.match(r"^\[(driver|wait|visit|on-call|leave)\]").all())
+        self.assertTrue(self.relay["events"].str.match(r"^\[(plan|driver|wait|visit|on-call|leave)\]").all())
 
     def test_drivers_only_plug_their_own_vehicle(self):
         driver = self.relay[self.relay["events"].str.startswith("[driver]")]
@@ -141,10 +142,24 @@ class TestScenarioDayWithRealPlanner(unittest.TestCase):
         self.assertEqual((self.day["site"] == "S1").sum(), 32)
         self.assertEqual((self.day["site"] == "S2").sum(), 18)
 
+    def scheduled_visits(self):
+        return self.relay[self.relay["events"].str.contains("night staff arrive (time planned", regex=False)]
+
     def test_scheduled_visits(self):
-        visits = self.relay[self.relay["events"].str.contains("night staff arrive (scheduled)", regex=False)]
-        self.assertIn("2026-11-13T00:30:00+02:00", set(visits[visits["site"] == "S1"]["t"]))
-        self.assertIn("2026-11-12T23:00:00+02:00", set(visits[visits["site"] == "S2"]["t"]))
+        visits = self.scheduled_visits()
+        self.assertIn("2026-11-13T00:00:00+02:00", set(visits[visits["site"] == "S1"]["t"]))
+        self.assertIn("2026-11-12T22:45:00+02:00", set(visits[visits["site"] == "S2"]["t"]))
+
+    def test_night_staff_arrive_when_the_system_booked_them(self):
+        # The visit is booked once from the timetable and not moved: every scheduled
+        # arrival matches the time an earlier [plan] row booked for the same site.
+        plans = self.relay[self.relay["events"].str.startswith("[plan]")]
+        visits = self.scheduled_visits()
+        self.assertTrue(len(visits))
+        for visit in visits.itertuples():
+            stamp = re.match(r"\[visit\] (\d\d\.\d\d \d\d:\d\d)", visit.events).group(1)
+            booked = plans[(plans["site"] == visit.site) & (plans["t"] < visit.t)]["events"]
+            self.assertIn(stamp, {re.search(r"for (\d\d\.\d\d \d\d:\d\d)$", e).group(1) for e in booked})
 
     def test_net_moves_on_the_scenario_night(self):
         # One charger per vehicle: 12 extra buses at S1, 6 extra trucks at S2. The baseline needs 19.

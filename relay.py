@@ -29,6 +29,7 @@ relay.py —— 司机只插自己的车，换插头全由夜班人员 on-call �
   state["all_vehicles"]  原来的完整列表（主循环用它记录发车）
   state["waiting"]       在场但没插枪的车 id
   state["relay_events"]  这一轮的记录，每条开头有标签，3 号按标签数次数：
+                         [plan]（系统按时刻表约好夜班人员的到场时间）
                          [driver] [wait] [visit]（夜班人员来了一趟） [on-call]（换了一次车）
                          [leave]（夜班人员离开，写明这趟在现场待了几分钟）
 
